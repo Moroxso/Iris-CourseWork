@@ -1,0 +1,11 @@
+{
+  "expected_protocol": "message",
+  "expected_report_sha256": "b45632d2fbbbfb498883ff984940971e164cb39b3327451ae954a8b11f2c1fe2",
+  "expected_source_sha256": "bd4adcd81e592832db66e6b5cfcfd96cc248467a54b5e6ef1b5dfa07089fbe88",
+  "maximum_report_bytes": 638230,
+  "maximum_source_bytes": 34403,
+  "runtime": {
+    "torch_git_version": "cf30153c4c131c8164ee7798e5022d810682e2cb",
+    "torch_version": "2.13.0+cpu"
+  }
+}

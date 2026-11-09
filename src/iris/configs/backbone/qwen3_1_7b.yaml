@@ -1,0 +1,20 @@
+name: qwen3_1_7b
+repository: Qwen/Qwen3-1.7B
+
+revision: 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e
+tokenizer_revision: 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e
+
+trust_remote_code: false
+local_files_only: false
+output_hidden_states: true
+use_cache: false
+dtype: fp32
+
+tokenizer:
+  use_fast: true
+  padding_side: left
+  truncation_side: left
+
+limits:
+  max_prompt_tokens: 256
+  max_new_tokens: 32

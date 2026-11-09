@@ -1,0 +1,20 @@
+{
+  "default-runtime": "runsc",
+  "runtimes": {
+    "runsc": {
+      "path": "/usr/bin/runsc",
+      "runtimeArgs": ["--platform=systrap", "--network=none"]
+    }
+  },
+  "no-new-privileges": true,
+  "bridge": "none",
+  "iptables": false,
+  "ip6tables": false,
+  "ip-forward": false,
+  "ip-masq": false,
+  "userland-proxy": false,
+  "log-driver": "local",
+  "log-opts": {"max-size": "5m", "max-file": "2"},
+  "max-concurrent-downloads": 2,
+  "max-download-attempts": 2
+}

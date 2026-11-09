@@ -1,0 +1,11 @@
+{
+  "expected_protocol": "workspace",
+  "expected_report_sha256": "ace5729197510c3e1a6a7a47184c76f328b7035b5fa6bbddc245b3b67ac8992c",
+  "expected_source_sha256": "b6091c20ce8cd93b1df907f77b4dcfc583d2b0062150da84b6fa9559ad5f66f4",
+  "maximum_report_bytes": 646536,
+  "maximum_source_bytes": 34016,
+  "runtime": {
+    "torch_git_version": "cf30153c4c131c8164ee7798e5022d810682e2cb",
+    "torch_version": "2.13.0+cpu"
+  }
+}

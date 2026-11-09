@@ -1,0 +1,24 @@
+{
+  "kind": "iris-coursework-cases-v1",
+  "purpose": "Three fixed functional examples; not a scientific benchmark or proof of GW benefit.",
+  "cases": [
+    {
+      "id": "arithmetic",
+      "prompt": "В коробке было 7 красных и 5 синих шаров. Затем 4 шара убрали. Сколько шаров осталось? Ответь только числом.",
+      "accepted_answers": ["8"],
+      "rationale": "7 + 5 - 4 = 8."
+    },
+    {
+      "id": "fact-retrieval",
+      "prompt": "Факты: ключ лежит в синем ящике; синий ящик стоит в шкафу. В каком ящике лежит ключ? Ответь только словами «в синем ящике», если это следует из фактов.",
+      "accepted_answers": ["в синем ящике"],
+      "rationale": "Literal retrieval and constrained response, not hidden reasoning."
+    },
+    {
+      "id": "state-tracking",
+      "prompt": "В начале лампа выключена. Затем её включили, выключили и снова включили. Каково конечное состояние лампы? Ответь одним словом: включена или выключена.",
+      "accepted_answers": ["включена"],
+      "rationale": "off -> on -> off -> on."
+    }
+  ]
+}

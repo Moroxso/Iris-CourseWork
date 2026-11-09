@@ -1,0 +1,10 @@
+name: iris_gw_0_1
+state_dim: 256
+num_modules: 8
+
+layer_sampler:
+  layer_fractions:
+    - 0.25
+    - 0.50
+    - 0.75
+    - 1.00

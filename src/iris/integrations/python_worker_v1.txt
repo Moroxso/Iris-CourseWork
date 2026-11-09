@@ -1,0 +1,95 @@
+# Fixed Iris worker. Load these bytes as data on Windows; execute ONLY in gVisor.
+# Expected answers are never part of this protocol. Observations are not
+# tamperproof attestation against code sharing this Python interpreter.
+import json
+import os
+import resource
+import sys
+
+
+def main():
+    raw_write, raw_exit = os.write, os._exit
+    kind, size, integer, sequence = type, len, int, list
+    is_callable, compile_source, execute = callable, compile, exec
+    encode_json, exception = json.dumps, BaseException
+    syntax_error = SyntaxError
+    if sys.version_info[:3] != (3, 12, 14) or os.getuid() != 65534:
+        raw_exit(80)
+    status = dict(line.split(':', 1) for line in open('/proc/self/status'))
+    if (int(status['CapEff'].strip(), 16) != 0
+            or int(status['CapBnd'].strip(), 16) != 0
+            or status['NoNewPrivs'].strip() != '1'):
+        raw_exit(80)
+    for key, limit in ((resource.RLIMIT_FSIZE, 1048576), (resource.RLIMIT_NOFILE, 64),
+                       (resource.RLIMIT_NPROC, 8), (resource.RLIMIT_CORE, 0)):
+        if resource.getrlimit(key) != (limit, limit):
+            raw_exit(80)
+    encoded = bytearray()
+    while chunk := sys.stdin.buffer.read(8192):
+        encoded.extend(chunk)
+        if size(encoded) > 8 * 1024 * 1024:
+            raw_exit(80)
+    request = json.loads(encoded)
+    protocol_fd = os.dup(1)
+    os.set_inheritable(protocol_fd, False)
+    os.dup2(2, 1)  # Ordinary/native candidate stdout joins bounded diagnostics.
+
+    def emit(value):
+        data = encode_json(value, ensure_ascii=True, allow_nan=False,
+                           separators=(',', ':')).encode('ascii')
+        while data:
+            written = raw_write(protocol_fd, data)
+            if written <= 0:
+                raw_exit(80)
+            data = data[written:]
+
+    if request == {'kind': 'invalid_source_v1'}:
+        emit({'kind': 'invalid_source'})
+        return
+    if set(request) != {'kind', 'source', 'inputs'} or request['kind'] != 'python_integer_list_v1':
+        raw_exit(80)
+    source, inputs = request['source'], request['inputs']
+    if kind(source) is not str or kind(inputs) is not sequence or not 4 <= size(inputs) <= 128:
+        raw_exit(80)
+    for values in inputs:
+        if (kind(values) is not sequence or size(values) > 1024
+                or any(kind(x) is not integer or not -(2**31) <= x < 2**31 for x in values)):
+            raw_exit(80)
+    try:
+        code = compile_source(source, '<iris-candidate>', 'exec')
+    except syntax_error:
+        emit({'kind': 'syntax_error'})
+        return
+    namespace = {'__name__': '__iris_candidate__', '__file__': '<iris-candidate>'}
+    try:
+        execute(code, namespace)
+    except exception:
+        emit({'kind': 'load_exception'})
+        return
+    solve = namespace.get('solve')
+    if not is_callable(solve):
+        emit({'kind': 'missing_entrypoint'})
+        return
+    observed = []
+    for values in inputs:
+        argument = sequence(values)
+        try:
+            result = solve(argument)
+        except exception:
+            observed.append({'kind': 'exception'})
+            continue
+        if kind(result) is not integer or not -(2**63) <= result < 2**63:
+            observed.append({'kind': 'non_integer'})
+            continue
+        after = None
+        if (kind(argument) is sequence and size(argument) <= 1024
+                and all(kind(x) is integer and -(2**31) <= x < 2**31 for x in argument)):
+            after = sequence(argument)
+        observed.append({'kind': 'value', 'result': result, 'input_after': after})
+    emit({'kind': 'observations', 'cases': observed})
+
+
+try:
+    main()
+except BaseException:
+    os._exit(80)  # Reserved worker/controller failure, never a model zero.

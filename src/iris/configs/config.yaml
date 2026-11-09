@@ -1,0 +1,20 @@
+defaults:
+  - backbone: qwen3_0_6b
+  - cognitive: iris_gw_0_1
+  - workspace: iris_gw_0_1
+  - hardware: cpu_smoke
+  - _self_
+
+project:
+  name: iris
+  version: "0.1.0"
+
+runtime:
+  seed: 42
+  deterministic: true
+  log_level: INFO
+  output_dir: artifacts/runs
+
+hydra:
+  run:
+    dir: ${runtime.output_dir}/${now:%Y-%m-%d}/${now:%H-%M-%S}

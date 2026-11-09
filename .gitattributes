@@ -1,0 +1,24 @@
+* text=auto
+
+.gitattributes text eol=lf
+.gitignore text eol=lf
+.python-version text eol=lf
+LICENSE text eol=lf
+Makefile text eol=lf
+uv.lock text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.conf text eol=lf
+*.list text eol=lf
+*.sources text eol=lf
+wslconfig text eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

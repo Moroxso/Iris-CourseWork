@@ -1,0 +1,12 @@
+{
+  "kind": "iris-coursework-bridge-data-v1",
+  "purpose": "Handwritten tutorial split, not a representative scientific benchmark.",
+  "examples": [
+    {"id": "train-color", "split": "train", "prompt": "The badge is violet. What color is the badge? Answer with one word.", "target": "violet"},
+    {"id": "train-password", "split": "train", "prompt": "В записке указан пароль «сосна». Какой пароль указан? Ответь одним словом.", "target": "сосна"},
+    {"id": "train-addition", "split": "train", "prompt": "Compute 3 + 4. Return only the number.", "target": "7"},
+    {"id": "heldout-token", "split": "heldout", "prompt": "The token is amber. What is the token? Answer with one word.", "target": "amber"},
+    {"id": "heldout-password", "split": "heldout", "prompt": "В записке указан пароль «липа». Какой пароль указан? Ответь одним словом.", "target": "липа"},
+    {"id": "heldout-addition", "split": "heldout", "prompt": "Compute 4 + 5. Return only the number.", "target": "9"}
+  ]
+}

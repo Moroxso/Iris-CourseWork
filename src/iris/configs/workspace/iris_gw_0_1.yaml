@@ -1,0 +1,14 @@
+name: iris_gw_0_1
+num_slots: 8
+cycles: 3
+winners_per_cycle: 2
+decay_rate: 0.85
+empty_threshold: 1.0e-3
+arbiter:
+  confidence_weight: 0.25
+  novelty_weight: 0.10
+  relevance_weight: 0.25
+allocator:
+  empty_bonus: 1.00
+  allocation_age_penalty: 0.10
+  retention_age_penalty: 0.10

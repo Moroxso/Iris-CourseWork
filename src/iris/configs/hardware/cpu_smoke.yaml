@@ -1,0 +1,5 @@
+name: cpu_smoke
+device: cpu
+precision: fp32
+max_memory_gb: 24
+allow_gpu: false

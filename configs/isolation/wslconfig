@@ -1,0 +1,8 @@
+# Iris code evaluator: bounded dedicated WSL2 environment.
+# Install only when the user has no existing .wslconfig; never overwrite one.
+[wsl2]
+defaultVhdSize=8GB
+swap=0
+memory=2GB
+processors=2
+guiApplications=false
