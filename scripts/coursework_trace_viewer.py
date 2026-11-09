@@ -147,9 +147,29 @@ def render_report(result: dict[str, Any], trace: dict[str, Any]) -> str:
         if not isinstance(result["latent_tokens"], dict):
             raise ValueError("Latent metadata object required")
         validate_latent_metadata(result["latent_tokens"], trace, result.get("latent_trace"))
+    graph_style = graph_html = graph_js = graph_draw = ""
+    if "workspace_vectors" in result:
+        from coursework_live_viewer import GRAPH_HTML, GRAPH_JS, GRAPH_STYLE, validate_vectors
+
+        vectors = result["workspace_vectors"]
+        if not isinstance(vectors, list) or len(vectors) != len(cycles):
+            raise ValueError("Winning vectors must cover the saved workspace trace")
+        for cycle, winning in zip(cycles, vectors, strict=True):
+            validate_vectors(cycle, winning)
+        graph_style, graph_html, graph_js = GRAPH_STYLE, GRAPH_HTML, GRAPH_JS
+        graph_draw = (
+            "drawWorkspaceGraph({...c,"
+            "winning_vectors:result.workspace_vectors[Number(slider.value)]},1);"
+        )
     data = json.dumps(dict(result=result, trace=trace), ensure_ascii=True, allow_nan=False)
     data = data.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
-    return TEMPLATE.replace("DATA_PLACEHOLDER", data)
+    return (
+        TEMPLATE.replace("GRAPH_STYLE_PLACEHOLDER", graph_style)
+        .replace("GRAPH_HTML_PLACEHOLDER", graph_html)
+        .replace("GRAPH_JS_PLACEHOLDER", graph_js)
+        .replace("GRAPH_DRAW_PLACEHOLDER", graph_draw)
+        .replace("DATA_PLACEHOLDER", data)
+    )
 
 
 TEMPLATE = """<!doctype html>
@@ -168,6 +188,7 @@ th,td{padding:10px 6px;text-align:left;border-bottom:1px solid GrayText}
 .scroll{overflow-x:auto}input{width:100%}
 .notice{border-left:4px solid GrayText;padding-left:12px}
 caption{text-align:left;margin-bottom:8px}
+GRAPH_STYLE_PLACEHOLDER
 </style>
 <h1>Iris · фактический Global Workspace</h1>
 <p class="notice" id="training-status"></p>
@@ -179,6 +200,7 @@ caption{text-align:left;margin-bottom:8px}
 <label for="cycle">Цикл <output id="cycle-number"></output></label>
 <input id="cycle" type="range" min="0" value="0" step="1">
 <p id="selection" aria-live="polite"></p>
+GRAPH_HTML_PLACEHOLDER
 <div class="scroll"><table><caption>Модули: заявка на запись</caption>
 <thead><tr><th>Модуль</th><th>Bid</th><th>Confidence</th><th>Выбран</th></tr></thead>
 <tbody id="modules"></tbody></table></div>
@@ -195,6 +217,7 @@ caption{text-align:left;margin-bottom:8px}
 <script id="trace-data" type="application/json">DATA_PLACEHOLDER</script>
 <script>
 "use strict";
+GRAPH_JS_PLACEHOLDER
 const data=JSON.parse(document.getElementById("trace-data").textContent);
 const result=data.result, trace=data.trace;
 const set=(id,value)=>{document.getElementById(id).textContent=value;};
@@ -225,6 +248,7 @@ function row(parent,values){
 }
 function draw(){
  const c=trace.cycles[Number(slider.value)];
+ GRAPH_DRAW_PLACEHOLDER
  set("cycle-number",c.cycle);
  set("selection","Выбранные модули (нумерация 0-based): "+c.selected_modules.join(", ")+
   ". Слоты записи: "+c.selected_slots.join(", ")+".");
@@ -251,6 +275,10 @@ if(latent){
 
 
 def main() -> None:
+    import sys
+
+    # Also support a direct isolated invocation (python -I).
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True)
     args = parser.parse_args()

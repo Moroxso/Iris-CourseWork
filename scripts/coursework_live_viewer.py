@@ -6,13 +6,35 @@ import json
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from math import hypot, isclose, isfinite
 from secrets import token_urlsafe
 from threading import Lock, Thread
 from typing import Any
 
 
+def validate_vectors(row: dict[str, Any], vectors: Any) -> None:
+    """Check that the vectors correspond to this cycle's actual write order."""
+    if not isinstance(vectors, list) or len(vectors) != len(row["selected_slots"]):
+        raise ValueError("Missing winning vectors")
+    for pair, module, slot in zip(
+        vectors, row["write_modules"], row["selected_slots"], strict=True
+    ):
+        if not isinstance(pair, dict) or pair.get("module") != module or pair.get("slot") != slot:
+            raise ValueError("Winning vector write pair mismatch")
+        for name in ("proposal", "stored"):
+            values = pair.get(name)
+            if (
+                not isinstance(values, list)
+                or len(values) != 256
+                or any(type(v) not in (int, float) or not isfinite(v) for v in values)
+            ):
+                raise ValueError("Invalid workspace vector coordinates")
+        if not isclose(hypot(*pair["stored"]), row["slot_norms"][slot], rel_tol=1e-5, abs_tol=1e-7):
+            raise ValueError("Stored vector norm does not match the recorded slot")
+
+
 class LiveState:
-    """Only the current request is published; no tensors, paths or history."""
+    """Only the current request and bounded diagnostics; no paths or history."""
 
     def __init__(self) -> None:
         self._lock = Lock()
@@ -59,6 +81,8 @@ class LiveState:
                     )
                 ):
                     raise ValueError("Live write pairs must match the observed workspace")
+                if "winning_vectors" in row:
+                    validate_vectors(row, row["winning_vectors"])
                 next_state.update(cycles=[*cycles, row], cycle_count=count)
             elif event == "generation":
                 latents = payload["latents"]
@@ -145,7 +169,116 @@ def live_view(state: LiveState) -> Iterator[str]:
             thread.join()
 
 
-PAGE = """<!doctype html>
+GRAPH_STYLE = """
+.gw-graph{width:100%;min-width:660px;height:auto;display:block}
+.gw-graph text{fill:CanvasText;font:15px system-ui}
+.gw-graph rect{fill:Canvas;stroke:GrayText;stroke-width:1.2}
+.gw-graph .chosen{fill:color-mix(in srgb,Highlight 22%,Canvas);stroke:Highlight;stroke-width:2.5}
+.gw-graph .write{stroke:Highlight;stroke-width:3;fill:none}
+.gw-graph .read{stroke:CanvasText;stroke-width:1.5;stroke-dasharray:4 5;fill:none}
+#gw-reads,#gw-vectors{margin:6px 0}
+#gw-vectors details{padding:6px 10px;border-left:3px solid Highlight;margin:6px 0}
+#gw-vectors pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.85em}
+"""
+
+GRAPH_HTML = """
+<section id="gw-diagram" hidden>
+<h2>Обмен между модулями и слотами</h2>
+<p>Сплошные стрелки: запись победителей. Пунктир: чтение выбранным модулем до записи.</p>
+<label for="gw-reader">Показать чтение:</label>
+<select id="gw-reader"></select>
+<div class="scroll"><svg class="gw-graph" id="gw-graph" viewBox="0 0 960 174"
+ role="img" aria-label="Схема связей модулей и слотов"></svg></div>
+<p id="gw-reads"></p>
+<h2>Векторы победивших заявок</h2>
+<p>Побеждают заявки модулей, не слова. Каждый вектор содержит 256 числовых координат.
+ Показаны предложенный вектор и содержимое слота после записи: они могут различаться.</p>
+<div id="gw-vectors"></div>
+</section>
+"""
+
+GRAPH_JS = """
+const gw=id=>document.getElementById(id);
+let gwCycle=null, gwRequest=null;
+function graphNode(parent,tag,attributes={},label=""){
+ const node=document.createElementNS("http://www.w3.org/2000/svg",tag);
+ for(const [key,value] of Object.entries(attributes))node.setAttribute(key,String(value));
+ if(label)node.textContent=label;
+ parent.appendChild(node);return node;
+}
+function drawGraphLinks(){
+ const c=gwCycle, svg=gw("gw-graph"), reader=Number(gw("gw-reader").value);
+ svg.replaceChildren();
+ const defs=graphNode(svg,"defs");
+ for(const name of ["read","write"]){
+  const marker=graphNode(defs,"marker",{
+   id:"gw-"+name,viewBox:"0 0 10 10",refX:9,refY:5,markerWidth:5,markerHeight:5,orient:"auto"});
+  graphNode(marker,"path",{d:"M 0 0 L 10 5 L 0 10 z",fill:name==="read"?"CanvasText":"Highlight"});
+ }
+ const x=(i,n)=>960*(i+.5)/n, modules=c.module_bids.length, slots=c.slot_sources.length;
+ const reads=c.read_attention[reader].map((weight,slot)=>({weight,slot})).filter(
+  ({weight,slot})=>weight>0&&c.read_slot_occupancy[slot]);
+ for(const {slot,weight} of reads){
+  const edge=graphNode(svg,"line",{
+   x1:x(slot,slots)-9,y1:128,x2:x(reader,modules)-9,y2:46,
+   class:"read","marker-end":"url(#gw-read)"});
+  graphNode(edge,"title",{},"Чтение слота "+slot+", вес "+weight.toPrecision(4));
+ }
+ c.selected_slots.forEach((slot,i)=>{
+  const edge=graphNode(svg,"line",{
+   x1:x(c.write_modules[i],modules)+9,y1:46,x2:x(slot,slots)+9,y2:128,
+   class:"write","marker-end":"url(#gw-write)"});
+  graphNode(edge,"title",{},"Модуль "+c.write_modules[i]+" → слот "+slot);
+ });
+ for(const [name,count,y,selected] of [
+  ["Модуль",modules,10,c.selected_modules],["Слот",slots,128,c.selected_slots]]){
+  for(let i=0;i<count;i++){
+   const mid=x(i,count);
+   graphNode(svg,"rect",{x:mid-51,y,width:102,height:36,rx:6,
+    class:selected.includes(i)?"chosen":""});
+   graphNode(svg,"text",{x:mid,y:y+23,"text-anchor":"middle"},name+" "+i);
+  }
+ }
+ gw("gw-reads").textContent=reads.length?
+  "Модуль "+reader+" читал: "+reads.map(({slot,weight})=>{
+   const source=c.read_slot_sources[slot];
+   return "слот "+slot+" (источник: модуль "+source+", вес "+weight.toPrecision(3)+")";
+  }).join(" · "):"Модуль "+reader+" не читал ни одного занятого слота в этом цикле.";
+}
+function drawWorkspaceGraph(c,request){
+ const enriched=Boolean(c?.winning_vectors);
+ gw("gw-diagram").hidden=!enriched;
+ if(!enriched){gwCycle=null;gwRequest=null;return;}
+ if(gwRequest===request&&gwCycle?.cycle===c.cycle)return;
+ const select=gw("gw-reader");
+ if(gwRequest!==request||!gwCycle){
+  select.replaceChildren(...c.module_bids.map((_,i)=>new Option("Модуль "+i,String(i))));
+  select.value=String(c.write_modules[0]??0);
+ }
+ gwRequest=request;gwCycle=c;
+ drawGraphLinks();
+ gw("gw-vectors").replaceChildren(...c.winning_vectors.map(pair=>{
+  const detail=document.createElement("details"), summary=document.createElement("summary");
+  summary.textContent="Модуль "+pair.module+" → слот "+pair.slot+" · "+pair.proposal.length+
+   " координат в каждом векторе";
+  const preview=document.createElement("p");
+  const first=values=>values.slice(0,4).map(v=>v.toPrecision(5)).join(", ");
+  preview.textContent="Первые четыре координаты: заявка ["+first(pair.proposal)+
+   "]; после записи ["+first(pair.stored)+"].";
+  detail.append(summary,preview);
+  for(const [title,values] of [["Предложенный вектор",pair.proposal],["После записи",pair.stored]]){
+   const heading=document.createElement("strong"), coordinates=document.createElement("pre");
+   heading.textContent=title;coordinates.textContent=values.join(", ");
+   detail.append(heading,coordinates);
+  }
+  return detail;
+ }));
+}
+gw("gw-reader").addEventListener("change",()=>{if(gwCycle)drawGraphLinks();});
+"""
+
+PAGE = (
+    """<!doctype html>
 <html lang="ru">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -181,6 +314,9 @@ caption{text-align:left;margin:8px 0}
 .compact .tables>section,.compact .request-pair>section{min-width:0}
 #connection:empty{display:none}
 @media(max-width:820px){.compact .tables,.compact .request-pair{grid-template-columns:1fr}}
+"""
+    + GRAPH_STYLE
+    + """
 </style>
 <div class="top"><h1>Iris · живой Global Workspace</h1>
 <label><input id="compact" type="checkbox" checked> Компактный вид</label></div>
@@ -198,6 +334,9 @@ caption{text-align:left;margin:8px 0}
 <input id="cycle" type="range" min="0" max="0" value="0" step="1" disabled></p>
 <p>Показан цикл <output id="cycle-number">—</output></p>
 <p id="selection">Данные появятся после записи первого цикла.</p>
+"""
+    + GRAPH_HTML
+    + """
 <div class="scroll details-only"><table><caption>Модули: заявка на запись</caption>
 <thead><tr><th>Модуль</th><th>Bid</th><th>Confidence</th><th>Выбран</th></tr></thead>
 <tbody id="modules"></tbody></table></div>
@@ -217,6 +356,9 @@ caption{text-align:left;margin:8px 0}
 </section></div>
 <script>
 "use strict";
+"""
+    + GRAPH_JS
+    + """
 const byId=id=>document.getElementById(id);
 const set=(id,value)=>{byId(id).textContent=value;};
 const slider=byId("cycle"), follow=byId("follow"), compact=byId("compact");
@@ -267,6 +409,7 @@ function drawCards(){
 function drawCycle(){
  if(state)drawCards();
  const c=state?.cycles[Number(slider.value)];
+ drawWorkspaceGraph(c,state?.request);
  if(!c){
   set("cycle-number","—");set("selection","Нет записанных циклов для этого запроса.");
   rows("modules",[]);rows("slots",[]);return;
@@ -325,3 +468,4 @@ poll();
 </script>
 </html>
 """
+)

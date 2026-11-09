@@ -30,6 +30,8 @@ def watch_workspace(request: Any, progress: ProgressSink) -> Iterator[None]:
     Adapt the pinned producer's existing diagnostic boundary without changing
     the producer sources bound into the trained checkpoint or patching a class.
     """
+    from coursework_live_viewer import validate_vectors
+
     from iris.workspace.trace import WorkspaceTraceRecorderV1
 
     if "_run_stage" in vars(request):
@@ -39,7 +41,9 @@ def watch_workspace(request: Any, progress: ProgressSink) -> Iterator[None]:
     def observe(name: str, operation: Callable[[], Any], **options: Any) -> Any:
         result = run_stage(name, operation, **options)
         if name.startswith("diagnostic trace for cycle "):
-            method = operation.func if isinstance(operation, partial) else None
+            if not isinstance(operation, partial):
+                raise ValueError("Unexpected coursework diagnostic operation")
+            method = operation.func
             recorder = getattr(method, "__self__", None)
             if (
                 type(recorder) is not WorkspaceTraceRecorderV1
@@ -61,8 +65,24 @@ def watch_workspace(request: Any, progress: ProgressSink) -> Iterator[None]:
                     "slot_norms",
                     "slot_sources",
                     "slot_occupancy",
+                    "read_slot_occupancy",
+                    "read_slot_sources",
+                    "read_attention",
                 },
             )
+            arguments = operation.keywords
+            proposed = arguments["proposal"].content.detach()
+            stored = arguments["workspace"].slots.detach()
+            row["winning_vectors"] = [
+                dict(
+                    module=module,
+                    slot=slot,
+                    proposal=proposed[0, module].tolist(),
+                    stored=stored[0, slot].tolist(),
+                )
+                for module, slot in zip(row["write_modules"], row["selected_slots"], strict=True)
+            ]
+            validate_vectors(row, row["winning_vectors"])
             progress("cycle", dict(row=row, cycle_count=recorder.count))
         return result
 
@@ -406,16 +426,19 @@ def main(
                 )
             request_began = time.perf_counter()
             out.mkdir(parents=True, exist_ok=serve is None and out == args.out)
-            if progress is None:
+            cycle_vectors: list[list[dict[str, Any]]] = []
+
+            def capture(event: str, payload: dict[str, Any]) -> None:
+                cycle_vectors.append(payload["row"]["winning_vectors"])
+                if progress is not None:
+                    progress(event, payload)
+
+            if progress is not None:
+                progress("first-pass", dict(prompt=prompt))
+            with watch_workspace(request, capture):
                 context, execution = context_for(
                     rendered, "coursework-trained-demo", checkpoint["manifest"]["sha256"]
                 )
-            else:
-                progress("first-pass", dict(prompt=prompt))
-                with watch_workspace(request, progress):
-                    context, execution = context_for(
-                        rendered, "coursework-trained-demo", checkpoint["manifest"]["sha256"]
-                    )
             assert execution.diagnostic_trace is not None
             save_new(
                 out / "workspace-trace.json", execution.diagnostic_trace.model_dump(mode="json")
@@ -463,6 +486,7 @@ def main(
                 sidecar_fully_trained=False,
                 optimizer_updates_performed=0,
                 workspace_trace=file_identity(out / "workspace-trace.json"),
+                workspace_vectors=cycle_vectors,
                 latent_tokens=observed.observation,
                 latent_trace=file_identity(out / "latent-tokens.json"),
                 checkpoint=checkpoint,
@@ -482,7 +506,11 @@ def main(
                 session_startup_seconds=startup_seconds,
                 consumer_sources={
                     p.name: file_identity(p)
-                    for p in (Path(__file__), ROOT / "scripts/coursework_trace_viewer.py")
+                    for p in (
+                        Path(__file__),
+                        ROOT / "scripts/coursework_trace_viewer.py",
+                        ROOT / "scripts/coursework_live_viewer.py",
+                    )
                 },
             )
             page = render_report(report, execution.diagnostic_trace.model_dump(mode="json"))

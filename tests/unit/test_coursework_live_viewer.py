@@ -78,6 +78,19 @@ def test_live_pairs_reject_misassociation(write: list[int], slots: list[int]) ->
     assert state.snapshot() == before
 
 
+def test_winning_vectors_must_match_observed_writes() -> None:
+    module = viewer()
+    row = {"write_modules": [4], "selected_slots": [1], "slot_norms": [0, 2.0]}
+    pair = {"module": 4, "slot": 1, "proposal": [3.0] * 256, "stored": [2.0] + [0.0] * 255}
+    module.validate_vectors(row, [pair])
+    with pytest.raises(ValueError, match="pair mismatch"):
+        module.validate_vectors(row, [dict(pair, slot=0)])
+    with pytest.raises(ValueError, match="coordinates"):
+        module.validate_vectors(row, [dict(pair, proposal=[float("nan")] * 256)])
+    with pytest.raises(ValueError, match="norm"):
+        module.validate_vectors(row, [dict(pair, stored=[0.0] * 256)])
+
+
 def test_only_secret_get_routes_and_loopback() -> None:
     module = viewer()
     with module.live_view(module.LiveState()) as url:
