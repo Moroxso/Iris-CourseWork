@@ -17,6 +17,7 @@ from typing import Any
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 from coursework_markdown import MARKDOWN_JS, MARKDOWN_STYLE
+from coursework_visuals import ATLAS_HTML, ATLAS_JS, CHART_JS, NODE_IDS, VISUAL_STYLE
 
 
 def validate_vectors(row: dict[str, Any], vectors: Any) -> None:
@@ -62,9 +63,20 @@ class LiveState:
                     cycles=[],
                     cycle_count=None,
                     latents=None,
+                    component="input" if event == "request" else None,
+                    visited=["input"] if event == "request" else [],
                 )
             elif event == "first-pass":
                 next_state["prompt"] = payload["prompt"]
+            elif event == "component":
+                component = payload["name"]
+                if component not in NODE_IDS:
+                    raise ValueError("Unknown architecture component")
+                visited = next_state["visited"]
+                next_state.update(
+                    component=component,
+                    visited=visited if component in visited else [*visited, component],
+                )
             elif event == "cycle":
                 cycles = next_state["cycles"]
                 row = payload["row"]
@@ -99,6 +111,8 @@ class LiveState:
                 ):
                     raise ValueError("Live latents require the complete workspace trace")
                 next_state["latents"] = latents
+                next_state["component"] = "decode"
+                next_state["visited"] = list(dict.fromkeys([*next_state["visited"], "decode"]))
             elif event == "completed":
                 if next_state["latents"] is None:
                     raise ValueError("Live result has no observed generator input")
@@ -107,7 +121,12 @@ class LiveState:
                 next_state["detail"] = payload["message"]
             else:
                 raise ValueError("Unknown live workspace event")
-            next_state.update(stage=event, revision=self._revision + 1)
+            if event in {"completed", "rejected", "failed"}:
+                next_state["component"] = None
+            next_state.update(
+                stage=next_state["stage"] if event == "component" else event,
+                revision=self._revision + 1,
+            )
             wire = json.dumps(next_state, ensure_ascii=False, allow_nan=False).encode("utf-8")
             # Isolate the snapshot from dictionaries owned by the inference code.
             self._current = json.loads(wire)
@@ -189,30 +208,29 @@ GRAPH_STYLE = """
 """
 
 GRAPH_HTML = """
-<section id="gw-diagram" hidden>
-<h2>Обмен между модулями и слотами</h2>
+<section id="gw-diagram" class="visual-panel" hidden>
+<div class="section-label">02 · Обмен внутри цикла</div>
+<h2>Модули и слоты</h2>
+<p>Все восемь модулей вычисляют заявки. Выделены только получившие право записи.</p>
 <p>Сплошные стрелки: запись победителей. Пунктир: чтение выбранным модулем до записи.</p>
 <label for="gw-reader">Показать чтение:</label>
 <select id="gw-reader"></select>
 <div class="scroll"><svg class="gw-graph" id="gw-graph" viewBox="0 0 960 174"
  role="img" aria-label="Схема связей модулей и слотов"></svg></div>
 <p id="gw-reads"></p>
-<h2>Векторы победивших заявок</h2>
-<p>Побеждают заявки модулей, не слова. Каждый вектор содержит 256 числовых координат.
- Показаны предложенный вектор и содержимое слота после записи: они могут различаться.</p>
+<div class="metric-grid" id="gw-metrics"></div>
+<h2><abbr title="Вектор — упорядоченный набор чисел, а не отдельное слово.">Векторы</abbr> победивших заявок</h2>
+<p class="vector-legend">Сплошная линия — заявка. Пунктир — содержимое слота после записи.
+ Координаты показаны в исходном порядке; линии не описывают движение во времени.</p>
+<div class="metric-grid" id="gw-vector-charts"></div>
+<details class="raw-data"><summary>Точные координаты</summary>
 <div id="gw-vectors"></div>
+</details>
 </section>
 """
 
 GRAPH_JS = """
-const gw=id=>document.getElementById(id);
 let gwCycle=null, gwRequest=null;
-function graphNode(parent,tag,attributes={},label=""){
- const node=document.createElementNS("http://www.w3.org/2000/svg",tag);
- for(const [key,value] of Object.entries(attributes))node.setAttribute(key,String(value));
- if(label)node.textContent=label;
- parent.appendChild(node);return node;
-}
 function drawGraphLinks(){
  const c=gwCycle, svg=gw("gw-graph"), reader=Number(gw("gw-reader").value);
  svg.replaceChildren();
@@ -251,6 +269,13 @@ function drawGraphLinks(){
    const source=c.read_slot_sources[slot];
    return "слот "+slot+" (источник: модуль "+source+", вес "+weight.toPrecision(3)+")";
   }).join(" · "):"Модуль "+reader+" не читал ни одного занятого слота в этом цикле.";
+ gw("gw-metrics").replaceChildren(
+  barChart("Оценки заявок","Собственная оценка модуля, не итоговый балл арбитра.",
+   c.module_bids,c.selected_modules,true),
+  barChart("Длины векторов в слотах","Длина вектора после записи. Нулевые столбцы — пустые слоты.",
+   c.slot_norms,c.selected_slots),
+  barChart("Веса чтения · модуль "+reader,"Доли чтения слотов до записи, не оценки важности слов.",
+   c.read_attention[reader],reads.map(r=>r.slot)));
 }
 function drawWorkspaceGraph(c,request){
  const enriched=Boolean(c?.winning_vectors);
@@ -264,6 +289,7 @@ function drawWorkspaceGraph(c,request){
  }
  gwRequest=request;gwCycle=c;
  drawGraphLinks();
+ gw("gw-vector-charts").replaceChildren(...c.winning_vectors.map(vectorChart));
  gw("gw-vectors").replaceChildren(...c.winning_vectors.map(pair=>{
   const detail=document.createElement("details"), summary=document.createElement("summary");
   summary.textContent="Модуль "+pair.module+" → слот "+pair.slot+" · "+pair.proposal.length+
@@ -311,7 +337,7 @@ PAGE = (
 <html lang="ru">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Iris · живой Global Workspace</title>
+<title>Iris · рабочее пространство вживую</title>
 <style>
 :root{color-scheme:light dark;font:16px system-ui}
 body{max-width:960px;margin:auto;padding:24px;background:Canvas;color:CanvasText}
@@ -345,13 +371,13 @@ caption{text-align:left;margin:8px 0}
 @media(max-width:820px){.compact .tables,.compact .request-pair{grid-template-columns:1fr}}
 """
     + MARKDOWN_STYLE
-    + FLOW_STYLE
+    + VISUAL_STYLE
     + GRAPH_STYLE
     + """
 </style>
-<div class="top"><h1>Iris · живой Global Workspace</h1>
+<div class="top"><h1>Iris · рабочее пространство вживую</h1>
 <label><input id="compact" type="checkbox" checked> Компактный вид</label></div>
-<p>Введите промпт в консоли. Здесь отображается текущий запрос, без истории чата.</p>
+<p>Введите запрос в консоли. Здесь отображается только текущий запрос.</p>
 <p class="notice" id="stage" role="status">Подключаюсь к сеансу…</p>
 <p id="connection" role="status"></p>
 <div class="request-pair">
@@ -359,7 +385,7 @@ caption{text-align:left;margin:8px 0}
 <section><h2>Ответ Iris</h2><div class="markdown-answer" id="answer">—</div></section>
 </div>
 """
-    + FLOW_HTML
+    + ATLAS_HTML
     + """
 <h2>Циклы рабочего пространства</h2>
 <div class="cycle-list" id="cycle-list" aria-label="Выбор цикла"></div>
@@ -371,27 +397,32 @@ caption{text-align:left;margin:8px 0}
 """
     + GRAPH_HTML
     + """
-<div class="scroll details-only"><table><caption>Модули: заявка на запись</caption>
-<thead><tr><th>Модуль</th><th>Bid</th><th>Confidence</th><th>Выбран</th></tr></thead>
+<details class="raw-data"><summary>Таблицы выбранного цикла</summary>
+<div class="scroll"><table><caption>Модули: заявка на запись</caption>
+<thead><tr><th>Модуль</th><th>Оценка заявки</th><th>Уверенность</th><th>Выбран</th></tr></thead>
 <tbody id="modules"></tbody></table></div>
-<div class="tables"><section>
 <h2>Слоты после записи</h2>
 <div class="scroll"><table><caption>Подсвечены записи выбранного цикла</caption>
-<thead><tr><th>Слот</th><th>Занят</th><th>Источник</th><th>Норма</th><th>Возраст</th><th>TTL</th>
+<thead><tr><th>Слот</th><th>Занят</th><th>Источник</th><th>Норма</th><th>Возраст</th><th>Время жизни</th>
 <th>Запись</th></tr></thead>
 <tbody id="slots"></tbody></table></div>
-</section><section>
-<h2>Latent embeddings перед генерацией</h2>
+</details><section class="visual-panel">
+<div class="section-label">03 · Вход генератора</div>
+<h2>Векторные представления перед генерацией</h2>
 <p id="latent-summary">Появятся при передаче входа генератору, после последнего цикла.</p>
+<div id="latent-chart" class="metric-grid"></div>
+<details class="raw-data"><summary>Точные сведения о входных векторах</summary>
 <div class="scroll"><table><caption>Фактический вход генератора, независимо от ползунка</caption>
 <thead><tr><th>Вектор</th><th>Слот</th><th>Занят</th><th>Источник</th>
-<th>Позиция</th><th>Mask</th><th>L2 норма</th></tr></thead>
+<th>Позиция</th><th>Маска внимания</th><th>Длина вектора</th></tr></thead>
 <tbody id="latents"></tbody></table></div>
-</section></div>
+</details></section>
 <script>
 "use strict";
 """
+    + CHART_JS
     + GRAPH_JS
+    + ATLAS_JS
     + MARKDOWN_JS
     + """
 const byId=id=>document.getElementById(id);
@@ -462,14 +493,16 @@ function draw(next){
  if(state?.revision===next.revision)return;
  const fresh=state?.request!==next.request||next.stage==="request";
  state=next;
- document.querySelectorAll("[data-flow]").forEach(node=>{
-  node.dataset.active=String(node.dataset.flow===next.stage);
- });
+ const active=document.querySelector('[data-component="'+(next.component??"none")+'"]');
+ drawAtlas(next.component,next.visited??[],active?
+  "Сейчас: "+active.querySelector("strong").textContent:
+  next.stage==="completed"?"Запрос обработан. Отмечены этапы, которые прошёл запрос.":
+  "Ожидание или завершение запроса. Короткие этапы остаются отмеченными.");
  const count=next.cycles.length;
  let status=stages[next.stage];
  if(next.request!==null)status="Запрос "+next.request+" · "+status;
  if(next.stage==="cycle")status+=" "+count+" / "+next.cycle_count;
- if(next.detail)status+=" · "+next.detail;
+ if(next.detail)status+=" · "+({stop_token:"токен окончания",max_new_tokens:"достигнут предел ответа"}[next.detail]??next.detail);
  set("stage",status);
  set("prompt",next.prompt||"—");
  renderMarkdown(byId("answer"),next.stage==="completed"?next.answer||"(пустой ответ)":"—");
@@ -479,11 +512,12 @@ function draw(next){
  drawCycle();
  const l=next.latents;
  set("latent-summary",l?
-  l.num_tokens+" \u00d7 "+l.embedding_dim+" · цикл "+l.source_cycle+" · "+l.dtype:
+  l.num_tokens+" \u00d7 "+l.embedding_dim+" · цикл "+l.source_cycle:
   "Нет векторов для текущего запроса. Они появятся на входе генератора.");
  rows("latents",l?l.slot_indices.map((s,i)=>
   [i,s,yes(l.slot_occupancy[i]),l.slot_occupancy[i]?l.slot_sources[i]:"—",
-   l.positions[i],String(l.attention_mask[i]),num(l.norms[i])]):[]);
+   l.positions[i],yes(l.attention_mask[i]),num(l.norms[i])]):[]);
+ drawLatentChart("latent-chart",l);
 }
 slider.addEventListener("input",()=>{follow.checked=false;drawCycle();});
 follow.addEventListener("change",()=>{if(follow.checked){slider.value=slider.max;drawCycle();}});

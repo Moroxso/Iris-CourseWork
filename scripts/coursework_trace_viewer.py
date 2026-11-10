@@ -1,3 +1,4 @@
+# ruff: noqa: E501, RUF001
 """Build an offline viewer from actual coursework result and workspace trace."""
 
 import argparse
@@ -152,8 +153,8 @@ def render_report(result: dict[str, Any], trace: dict[str, Any]) -> str:
     scripts_dir = str(Path(__file__).resolve().parent)
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
-    from coursework_live_viewer import FLOW_HTML, FLOW_STYLE
     from coursework_markdown import MARKDOWN_JS, MARKDOWN_STYLE
+    from coursework_visuals import ATLAS_HTML, ATLAS_JS, CHART_JS, VISUAL_STYLE
 
     graph_style = graph_html = graph_js = graph_draw = ""
     if "workspace_vectors" in result:
@@ -174,8 +175,10 @@ def render_report(result: dict[str, Any], trace: dict[str, Any]) -> str:
     return (
         TEMPLATE.replace("MARKDOWN_STYLE_PLACEHOLDER", MARKDOWN_STYLE)
         .replace("MARKDOWN_JS_PLACEHOLDER", MARKDOWN_JS)
-        .replace("FLOW_STYLE_PLACEHOLDER", FLOW_STYLE)
-        .replace("FLOW_HTML_PLACEHOLDER", FLOW_HTML)
+        .replace("FLOW_STYLE_PLACEHOLDER", VISUAL_STYLE)
+        .replace("FLOW_HTML_PLACEHOLDER", ATLAS_HTML)
+        .replace("ATLAS_JS_PLACEHOLDER", ATLAS_JS)
+        .replace("CHART_JS_PLACEHOLDER", CHART_JS)
         .replace("GRAPH_STYLE_PLACEHOLDER", graph_style)
         .replace("GRAPH_HTML_PLACEHOLDER", graph_html)
         .replace("GRAPH_JS_PLACEHOLDER", graph_js)
@@ -189,7 +192,7 @@ TEMPLATE = """<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy"
 content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
-<title>Iris — фактический workspace trace</title>
+<title>Iris · запись рабочего пространства</title>
 <style>
 :root{color-scheme:light dark;font:16px system-ui}
 body{max-width:960px;margin:auto;padding:24px;background:Canvas;color:CanvasText}
@@ -204,11 +207,11 @@ MARKDOWN_STYLE_PLACEHOLDER
 FLOW_STYLE_PLACEHOLDER
 GRAPH_STYLE_PLACEHOLDER
 </style>
-<h1>Iris · фактический Global Workspace</h1>
+<h1>Iris · запись рабочего пространства</h1>
 <p class="notice" id="training-status"></p>
 <p id="identity"></p>
 <details><summary>Системная инструкция</summary><p id="system-prompt"></p></details>
-<details><summary>Checkpoint bridge</summary><p id="checkpoint"></p></details>
+<details><summary>Снимок состояния векторного моста</summary><p id="checkpoint"></p></details>
 <h2>Запрос</h2><p id="prompt"></p>
 <h2>Ответ Iris</h2><div class="markdown-answer" id="answer"></div>
 FLOW_HTML_PLACEHOLDER
@@ -216,42 +219,52 @@ FLOW_HTML_PLACEHOLDER
 <input id="cycle" type="range" min="0" value="0" step="1">
 <p id="selection" aria-live="polite"></p>
 GRAPH_HTML_PLACEHOLDER
+<details class="raw-data"><summary>Таблицы выбранного цикла</summary>
 <div class="scroll"><table><caption>Модули: заявка на запись</caption>
-<thead><tr><th>Модуль</th><th>Bid</th><th>Confidence</th><th>Выбран</th></tr></thead>
+<thead><tr><th>Модуль</th><th>Оценка заявки</th><th>Уверенность</th><th>Выбран</th></tr></thead>
 <tbody id="modules"></tbody></table></div>
 <div class="scroll"><table><caption>Слоты после записи</caption>
-<thead><tr><th>Слот</th><th>Занят</th><th>Источник</th><th>Норма</th><th>Возраст</th><th>TTL</th></tr></thead>
+<thead><tr><th>Слот</th><th>Занят</th><th>Источник</th><th>Норма</th><th>Возраст</th><th>Время жизни</th></tr></thead>
 <tbody id="slots"></tbody></table></div>
-<h2>Latent embeddings перед генерацией</h2>
+</details><section class="visual-panel">
+<div class="section-label">03 · Вход генератора</div>
+<h2>Векторные представления перед генерацией</h2>
 <p id="latent-summary"></p>
+<div id="latent-chart" class="metric-grid"></div>
+<details class="raw-data"><summary>Точные сведения о входных векторах</summary>
 <div class="scroll"><table><caption>Последний цикл, независимо от ползунка выше</caption>
 <thead><tr><th>Вектор</th><th>Слот</th><th>Занят</th><th>Источник</th>
-<th>Позиция</th><th>Mask</th><th>L2 норма</th></tr></thead>
+<th>Позиция</th><th>Маска внимания</th><th>Длина вектора</th></tr></thead>
 <tbody id="latents"></tbody></table></div>
+</details></section>
 <h2>Границы результата</h2><p id="limits"></p>
 <script id="trace-data" type="application/json">DATA_PLACEHOLDER</script>
 <script>
 "use strict";
+CHART_JS_PLACEHOLDER
 GRAPH_JS_PLACEHOLDER
+ATLAS_JS_PLACEHOLDER
 MARKDOWN_JS_PLACEHOLDER
 const data=JSON.parse(document.getElementById("trace-data").textContent);
 const result=data.result, trace=data.trace;
 const set=(id,value)=>{document.getElementById(id).textContent=value;};
-set("identity","CPU · "+trace.num_modules+" модулей · "+trace.num_slots+
- " слотов · layout: "+(result.prefix_layout || "suffix"));
+set("identity","Центральный процессор · "+trace.num_modules+" модулей · "+trace.num_slots+
+ " слотов · "+(result.prefix_layout==="chat-boundary"?"вставка перед заголовком ответа":
+ "вставка после запроса"));
 set("prompt",result.prompt);renderMarkdown(document.getElementById("answer"),result.text);
 set("system-prompt",result.system_prompt || "Отсутствует");
 const trained=result.kind==="iris-coursework-trained-bridge-demo-v1";
 set("training-status",trained?
- "Учебный режим: обучен только bridge; когнитивные модули необучены. "+
+ "Учебный режим: обучен только векторный мост; когнитивные модули необучены. "+
  "Улучшение качества не доказано.":
- "Учебный режим: bridge и когнитивные модули необучены. "+
- "Trace показывает вычисления; улучшение качества не доказано.");
+ "Учебный режим: мост и когнитивные модули необучены. "+
+ "Запись показывает вычисления; улучшение качества не доказано.");
 set("checkpoint",trained?"Шагов обучения: "+result.checkpoint.completed_steps+
- ". Manifest SHA256: "+result.checkpoint.manifest.sha256+
- ". State SHA256: "+result.checkpoint.state.sha256:"Отсутствует");
-set("limits","Stop: "+result.stop_reason+". Seed: "+result.seed+
- ". Обучение всего sidecar: нет. Научная приёмка: нет.");
+ ". SHA-256 описи: "+result.checkpoint.manifest.sha256+
+ ". SHA-256 состояния: "+result.checkpoint.state.sha256:"Отсутствует");
+set("limits","Остановка: "+({stop_token:"токен окончания",max_new_tokens:"предел ответа"}[result.stop_reason]??result.stop_reason)+
+ ". Начальное число генератора случайных чисел: "+result.seed+".");
+drawAtlas(null,result.architecture_components??[],"Сохранённый запрос: карта не показывает текущую активность.");
 const slider=document.getElementById("cycle");
 slider.max=String(trace.cycles.length-1);
 const number=(v)=>Number(v).toFixed(4);
@@ -266,7 +279,7 @@ function draw(){
  const c=trace.cycles[Number(slider.value)];
  GRAPH_DRAW_PLACEHOLDER
  set("cycle-number",c.cycle);
- set("selection","Выбранные модули (нумерация 0-based): "+c.selected_modules.join(", ")+
+ set("selection","Выбранные модули (нумерация с нуля): "+c.selected_modules.join(", ")+
   ". Слоты записи: "+c.selected_slots.join(", ")+".");
  const modules=document.getElementById("modules"), slots=document.getElementById("slots");
  modules.replaceChildren();slots.replaceChildren();
@@ -275,16 +288,17 @@ function draw(){
 }
 slider.addEventListener("input",draw);draw();
 const latent=result.latent_tokens;
+drawLatentChart("latent-chart",latent);
 if(latent){
  set("latent-summary",latent.num_tokens+" векторов по "+latent.embedding_dim+
-  " чисел; цикл "+latent.source_cycle+". Это не словарные token IDs. "+
-  "Пустые слоты тоже имеют embedding. SHA256: "+latent.embedding_sha256);
+  " чисел; цикл "+latent.source_cycle+". Это не токены словаря. "+
+  "Мост формирует представления и для пустых слотов.");
  const table=document.getElementById("latents");
  latent.slot_indices.forEach((slot,i)=>row(table,[i,slot,
   latent.slot_occupancy[i]?"да":"нет",latent.slot_sources[i]<0?"—":latent.slot_sources[i],
-  latent.positions[i],latent.attention_mask[i]?"true":"false",number(latent.norms[i])]));
+  latent.positions[i],latent.attention_mask[i]?"да":"нет",number(latent.norms[i])]));
 }else{
- set("latent-summary","Для этого сохранённого артефакта latent metadata не записаны.");
+ set("latent-summary","В этой записи нет сведений о входных векторах.");
 }
 </script></html>
 """

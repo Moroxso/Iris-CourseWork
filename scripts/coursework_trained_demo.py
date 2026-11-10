@@ -24,13 +24,16 @@ ProgressSink = Callable[[str, dict[str, Any]], None]
 
 
 @contextmanager
-def watch_workspace(request: Any, progress: ProgressSink) -> Iterator[None]:
+def watch_workspace(
+    request: Any, progress: ProgressSink, component: Callable[[str], None] | None = None
+) -> Iterator[None]:
     """Expose validated cycle metadata from this one owned request only.
 
     Adapt the pinned producer's existing diagnostic boundary without changing
     the producer sources bound into the trained checkpoint or patching a class.
     """
     from coursework_live_viewer import validate_vectors
+    from coursework_visuals import component_for_stage
 
     from iris.workspace.trace import WorkspaceTraceRecorderV1
 
@@ -39,6 +42,8 @@ def watch_workspace(request: Any, progress: ProgressSink) -> Iterator[None]:
     run_stage = request._run_stage
 
     def observe(name: str, operation: Callable[[], Any], **options: Any) -> Any:
+        if component is not None and (node := component_for_stage(name)) is not None:
+            component(node)
         result = run_stage(name, operation, **options)
         if name.startswith("diagnostic trace for cycle "):
             if not isinstance(operation, partial):
@@ -189,7 +194,12 @@ def main(
     serve: Callable[[GeneratePrompt], None] | None = None,
     quiet: bool = False,
     progress: ProgressSink | None = None,
+    comparison_budget: int | None = None,
 ) -> int:
+    if comparison_budget is not None and (
+        type(comparison_budget) is not int or not 1 <= comparison_budget <= 32 or serve is None
+    ):
+        raise ValueError("Comparison requires a session and a bounded shared decoding budget")
     process_began = time.perf_counter()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--snapshot", type=Path, required=True)
@@ -230,12 +240,15 @@ def main(
     import torch
     import yaml  # type: ignore[import-untyped]
     from coursework_bridge_checkpoint import restore_checkpoint
+    from coursework_prefix import chat_boundary_prefix
     from coursework_trace_viewer import render_report
     from transformers import AutoTokenizer
 
     from iris.application.composition import build_request_orchestrator
     from iris.backbone import BackboneAdapter
     from iris.generation import TemperatureTopPSamplingConfig
+    from iris.generation.facade import IrisGenerator
+    from iris.generation.outputs import SecondPassGenerationPrefixOutput
     from iris.schemas import BackboneConfig, CognitiveConfig, WorkspaceConfig
     from iris.utils.devices import inspect_device
     from iris.workspace.state import WorkspaceState
@@ -339,6 +352,16 @@ def main(
             sampling=TemperatureTopPSamplingConfig(temperature=0.8, top_p=0.9),
         )
         fingerprint = request.sidecar_state_sha256
+        comparison_generator = (
+            IrisGenerator(
+                backbone,
+                max_new_tokens=comparison_budget,
+                stop_token_ids=backbone.eos_token_ids,
+                sampling=request._iris_generator.sampling,
+            )
+            if comparison_budget is not None
+            else None
+        )
         stage("loaded")
 
         def context_for(
@@ -429,6 +452,13 @@ def main(
             request_began = time.perf_counter()
             out.mkdir(parents=True, exist_ok=serve is None and out == args.out)
             cycle_vectors: list[list[dict[str, Any]]] = []
+            components = ["input"]
+
+            def component(name: str) -> None:
+                if name not in components:
+                    components.append(name)
+                if progress is not None:
+                    progress("component", dict(name=name))
 
             def capture(event: str, payload: dict[str, Any]) -> None:
                 cycle_vectors.append(payload["row"]["winning_vectors"])
@@ -437,7 +467,7 @@ def main(
 
             if progress is not None:
                 progress("first-pass", dict(prompt=prompt))
-            with watch_workspace(request, capture):
+            with watch_workspace(request, capture, component):
                 context, execution = context_for(
                     rendered, "coursework-trained-demo", checkpoint["manifest"]["sha256"]
                 )
@@ -445,11 +475,62 @@ def main(
             save_new(
                 out / "workspace-trace.json", execution.diagnostic_trace.model_dump(mode="json")
             )
-            observed = ObservedGenerator(request._iris_generator, context, progress=progress)
+            component("bridge")
+            observed = ObservedGenerator(
+                comparison_generator or request._iris_generator, context, progress=progress
+            )
             generation = generate_from_context(backbone, observed, bridge, context)
+            components.append("decode")
             if observed.observation is None:
                 raise ValueError("Actual generation prefix observation missing")
             save_new(out / "latent-tokens.json", observed.observation)
+            controls: dict[str, Any] = {}
+            if comparison_generator is not None:
+                # No extra positions for Qwen; the empty control keeps the same
+                # trained bridge, positions, prompt, decoder and decoding budget.
+                with torch.inference_mode():
+                    ids = context["ids"]
+                    mask = context["mask"].to(torch.bool)
+                    embeddings = backbone.embed_tokens(ids)
+                    raw = SecondPassGenerationPrefixOutput(
+                        inputs_embeds=embeddings,
+                        attention_mask=mask,
+                        position_ids=torch.arange(ids.shape[-1], device=ids.device).unsqueeze(0),
+                    )
+                    state = context["workspace"]
+                    empty = WorkspaceState.empty(
+                        batch_size=1,
+                        num_slots=state.slots.shape[1],
+                        state_dim=state.slots.shape[2],
+                        dtype=state.slots.dtype,
+                        device=state.slots.device,
+                    )
+                    empty_vectors = bridge(empty, mask).workspace_embeddings
+                    empty_prefix = chat_boundary_prefix(
+                        embeddings, empty_vectors, context["boundary"]
+                    )
+                    for label, prefix in (("qwen", raw), ("empty_workspace", empty_prefix)):
+                        control = comparison_generator.generate(
+                            prefix, strategy="greedy", workspace_trace=()
+                        )
+                        controls[label] = dict(
+                            text=control.text,
+                            stop_reason=control.stop_reason,
+                            token_ids=control.token_ids.tolist(),
+                            positions=prefix.inputs_embeds.shape[1],
+                        )
+                    controls["settings"] = dict(
+                        max_new_tokens=comparison_budget,
+                        prompt_tokens=ids.shape[1],
+                        iris_positions=observed.observation["positions"][-1]
+                        + (ids.shape[1] - context["boundary"])
+                        + 1,
+                        filled_slots=int(state.occupancy.sum()),
+                        empty_latents_sha256=sha256(
+                            empty_vectors.contiguous().cpu().numpy().tobytes()
+                        ).hexdigest(),
+                        iris_latents_sha256=observed.observation["embedding_sha256"],
+                    )
             if (
                 request.sidecar_state_sha256 != fingerprint
                 or backbone.trainable_parameter_count != 0
@@ -489,6 +570,7 @@ def main(
                 optimizer_updates_performed=0,
                 workspace_trace=file_identity(out / "workspace-trace.json"),
                 workspace_vectors=cycle_vectors,
+                architecture_components=components,
                 latent_tokens=observed.observation,
                 latent_trace=file_identity(out / "latent-tokens.json"),
                 checkpoint=checkpoint,
@@ -512,9 +594,12 @@ def main(
                         Path(__file__),
                         ROOT / "scripts/coursework_trace_viewer.py",
                         ROOT / "scripts/coursework_live_viewer.py",
+                        ROOT / "scripts/coursework_visuals.py",
                     )
                 },
             )
+            if controls:
+                report["comparison"] = controls
             page = render_report(report, execution.diagnostic_trace.model_dump(mode="json"))
             with (out / "viewer.html").open("x", encoding="utf-8") as stream:
                 stream.write(page)

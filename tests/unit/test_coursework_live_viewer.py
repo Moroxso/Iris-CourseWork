@@ -91,6 +91,23 @@ def test_winning_vectors_must_match_observed_writes() -> None:
         module.validate_vectors(row, [dict(pair, stored=[0.0] * 256)])
 
 
+def test_architecture_records_observed_components_and_resets() -> None:
+    state = viewer().LiveState()
+    state.publish("request", {"request": 1})
+    state.publish("first-pass", {"prompt": "example"})
+    for name in ("qwen", "read", "modules", "write", "read"):
+        state.publish("component", {"name": name})
+    before = json.loads(state.snapshot())
+    assert before["stage"] == "first-pass"
+    assert before["component"] == "read"
+    assert before["visited"] == ["input", "qwen", "read", "modules", "write"]
+    with pytest.raises(ValueError, match="Unknown architecture"):
+        state.publish("component", {"name": "imagined"})
+    assert json.loads(state.snapshot()) == before
+    state.publish("request", {"request": 2})
+    assert json.loads(state.snapshot())["visited"] == ["input"]
+
+
 def test_only_secret_get_routes_and_loopback() -> None:
     module = viewer()
     with module.live_view(module.LiveState()) as url:
@@ -110,7 +127,7 @@ def test_only_secret_get_routes_and_loopback() -> None:
 
         home = parts.path
         status, html, headers = request("GET", home)
-        assert status == 200 and b"Latent embeddings" in html
+        assert status == 200 and "Векторные представления перед генерацией".encode() in html
         assert b".textContent=" in html and b".innerHTML" not in html
         assert headers["Cache-Control"] == "no-store"
         assert headers["Referrer-Policy"] == "no-referrer"
