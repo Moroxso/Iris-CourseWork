@@ -23,7 +23,7 @@ def module(name: str = "coursework_trained_demo") -> Any:
     return loaded
 
 
-@pytest.mark.parametrize("prompt", ["", " ", "x" * 8193])
+@pytest.mark.parametrize("prompt", ["", " ", "x" * 32769], ids=["empty", "blank", "too-long"])
 def test_invalid_prompt_refuses_before_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prompt: str
 ) -> None:

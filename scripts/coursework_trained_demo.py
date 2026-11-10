@@ -98,8 +98,8 @@ class PromptValidationError(ValueError):
 
 
 def validate_prompt(prompt: str) -> None:
-    if not prompt.strip() or len(prompt.encode("utf-8")) > 8192:
-        raise PromptValidationError("Nonempty prompt at most 8192 UTF-8 bytes required")
+    if not prompt.strip() or len(prompt.encode("utf-8")) > 32768:
+        raise PromptValidationError("Nonempty prompt at most 32768 UTF-8 bytes required")
 
 
 def snapshot_latent_metadata(prefix: Any, context: dict[str, Any]) -> dict[str, Any]:
@@ -256,7 +256,7 @@ def main(
     configs["backbone"].update(
         repository=str(args.snapshot),
         local_files_only=True,
-        limits=dict(max_prompt_tokens=128, max_new_tokens=32),
+        limits=dict(max_prompt_tokens=1024, max_new_tokens=1024),
     )
     rows = load_data(DATA)
     paths = [ROOT / "scripts/coursework_bridge_train.py", DATA, CASES]
@@ -307,8 +307,10 @@ def main(
     )
     if args.prompt is not None:
         live_prompt = render_prompt(tokenizer, args.prompt, raw=False)
-        if len(tokenizer.encode(live_prompt, add_special_tokens=False)) > 128:
-            raise PromptValidationError("Rendered prompt exceeds 128 tokens; no truncation allowed")
+        if len(tokenizer.encode(live_prompt, add_special_tokens=False)) > 1024:
+            raise PromptValidationError(
+                "Rendered prompt exceeds 1024 tokens; no truncation allowed"
+            )
     args.out.mkdir(parents=True)
     began = time.perf_counter()
     stages: list[dict[str, Any]] = []
@@ -420,9 +422,9 @@ def main(
             if out.exists() and not (serve is None and out == args.out):
                 raise ValueError("Fresh request output required")
             rendered = render_prompt(tokenizer, prompt, raw=False)
-            if len(tokenizer.encode(rendered, add_special_tokens=False)) > 128:
+            if len(tokenizer.encode(rendered, add_special_tokens=False)) > 1024:
                 raise PromptValidationError(
-                    "Rendered prompt exceeds 128 tokens; no truncation allowed"
+                    "Rendered prompt exceeds 1024 tokens; no truncation allowed"
                 )
             request_began = time.perf_counter()
             out.mkdir(parents=True, exist_ok=serve is None and out == args.out)

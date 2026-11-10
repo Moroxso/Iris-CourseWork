@@ -169,7 +169,7 @@ def main() -> int:
         configs["backbone"].update(
             repository=str(args.snapshot),
             local_files_only=True,
-            limits=dict(max_prompt_tokens=128, max_new_tokens=32),
+            limits=dict(max_prompt_tokens=1024, max_new_tokens=1024),
         )
         paths = [Path(__file__), DATA, CASES]
         paths += [

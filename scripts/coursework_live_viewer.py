@@ -1,15 +1,22 @@
+# ruff: noqa: E501, RUF001
 """Read-only, per-session browser view of the interactive coursework run."""
 
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from math import hypot, isclose, isfinite
+from pathlib import Path
 from secrets import token_urlsafe
 from threading import Lock, Thread
 from typing import Any
+
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from coursework_markdown import MARKDOWN_JS, MARKDOWN_STYLE
 
 
 def validate_vectors(row: dict[str, Any], vectors: Any) -> None:
@@ -277,6 +284,28 @@ function drawWorkspaceGraph(c,request){
 gw("gw-reader").addEventListener("change",()=>{if(gwCycle)drawGraphLinks();});
 """
 
+FLOW_STYLE = """
+.flow-graph{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;margin:12px 0}
+.flow-node{flex:1 1 135px;border:1px solid GrayText;border-radius:9px;padding:10px;background:Canvas}
+.flow-node strong,.flow-node small{display:block}.flow-node small{margin-top:5px;line-height:1.35}
+.flow-node[data-active=true]{border-color:Highlight;box-shadow:inset 0 0 0 2px Highlight}
+.flow-arrow{align-self:center;font-size:1.4rem;color:GrayText}
+@media(max-width:650px){.flow-arrow{display:none}.flow-node{flex-basis:40%}}
+"""
+FLOW_HTML = """
+<section aria-label="Путь генерации">
+<h2>Как проходит запрос</h2>
+<p>Схема этапов; фактические записи и чтение показаны по циклам ниже.</p>
+<div class="flow-graph" role="list">
+<div class="flow-node" data-flow="request" role="listitem"><strong>1 · Запрос</strong><small>Текст и шаблон чата</small></div><span class="flow-arrow" aria-hidden="true">→</span>
+<div class="flow-node" data-flow="first-pass" role="listitem"><strong>2 · Qwen</strong><small>Первый проход: контекст для модулей</small></div><span class="flow-arrow" aria-hidden="true">→</span>
+<div class="flow-node" data-flow="cycle" role="listitem"><strong>3 · Рабочее пространство</strong><small>Модули читают слоты, конкурируют и записывают в них данные за три цикла</small></div><span class="flow-arrow" aria-hidden="true">→</span>
+<div class="flow-node" data-flow="generation" role="listitem"><strong>4 · Мост и генератор</strong><small>Слоты преобразуются в векторы на входе Qwen</small></div><span class="flow-arrow" aria-hidden="true">→</span>
+<div class="flow-node" data-flow="completed" role="listitem"><strong>5 · Ответ</strong><small>Текст и причина остановки</small></div>
+</div><p>Обучен только мост; когнитивные модули не обучены. Схема показывает устройство, а не доказательство улучшения качества.</p>
+</section>
+"""
+
 PAGE = (
     """<!doctype html>
 <html lang="ru">
@@ -315,6 +344,8 @@ caption{text-align:left;margin:8px 0}
 #connection:empty{display:none}
 @media(max-width:820px){.compact .tables,.compact .request-pair{grid-template-columns:1fr}}
 """
+    + MARKDOWN_STYLE
+    + FLOW_STYLE
     + GRAPH_STYLE
     + """
 </style>
@@ -325,8 +356,11 @@ caption{text-align:left;margin:8px 0}
 <p id="connection" role="status"></p>
 <div class="request-pair">
 <section><h2>Запрос</h2><p id="prompt">—</p></section>
-<section><h2>Ответ Iris</h2><p id="answer">—</p></section>
+<section><h2>Ответ Iris</h2><div class="markdown-answer" id="answer">—</div></section>
 </div>
+"""
+    + FLOW_HTML
+    + """
 <h2>Циклы рабочего пространства</h2>
 <div class="cycle-list" id="cycle-list" aria-label="Выбор цикла"></div>
 <label><input id="follow" type="checkbox" checked> Следовать за последним циклом</label>
@@ -358,6 +392,7 @@ caption{text-align:left;margin:8px 0}
 "use strict";
 """
     + GRAPH_JS
+    + MARKDOWN_JS
     + """
 const byId=id=>document.getElementById(id);
 const set=(id,value)=>{byId(id).textContent=value;};
@@ -427,6 +462,9 @@ function draw(next){
  if(state?.revision===next.revision)return;
  const fresh=state?.request!==next.request||next.stage==="request";
  state=next;
+ document.querySelectorAll("[data-flow]").forEach(node=>{
+  node.dataset.active=String(node.dataset.flow===next.stage);
+ });
  const count=next.cycles.length;
  let status=stages[next.stage];
  if(next.request!==null)status="Запрос "+next.request+" · "+status;
@@ -434,7 +472,7 @@ function draw(next){
  if(next.detail)status+=" · "+next.detail;
  set("stage",status);
  set("prompt",next.prompt||"—");
- set("answer",next.stage==="completed"?next.answer||"(пустой ответ)":"—");
+ renderMarkdown(byId("answer"),next.stage==="completed"?next.answer||"(пустой ответ)":"—");
  slider.max=String(Math.max(0,count-1));slider.disabled=count===0;
  if(fresh)follow.checked=true;
  if(follow.checked)slider.value=slider.max;
