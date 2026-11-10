@@ -93,7 +93,7 @@ $manifest = Join-Path $kit 'manifest.json'
 
 ```powershell
 $comparison = Join-Path $PWD 'artifacts/workspace-comparison-demo'
-& $python -I -B scripts/coursework_workspace_comparison.py --snapshot $snapshot --checkpoint $checkpoint --manifest $manifest --out $comparison
+& $python -I -B scripts/coursework_workspace_comparison.py --profile smoke --snapshot $snapshot --checkpoint $checkpoint --manifest $manifest --out $comparison
 $trainingPage = Join-Path $train 'training-view.html'
 & $python -I -B scripts/coursework_training_view.py --run $train --out $trainingPage
 ```
@@ -102,12 +102,11 @@ $trainingPage = Join-Path $train 'training-view.html'
 `index.html` в каталоге сравнения и `training-view.html` в каталоге обучения.
 Страница обучения воспроизводит сохранённые шаги; она не запускает обучение.
 
-Сравнение запускает восемь синтетических запросов в трёх режимах: Qwen
-без вставки, Iris с пустыми слотами перед мостом и полный Iris. Во всех
-режимах совпадают модель, текст запроса, жадный выбор токенов и предел
-ответа. Оценивается точное совпадение с однословным ответом. Разница между
-полным Iris и пустым контролем показывает влияние содержимого слотов в
-этих запросах, но сама по себе не означает прирост точности.
+Профиль `smoke` проверяет 12 заданий на русском, английском и
+упрощённом китайском; в полном профиле 96 заданий. Для математики
+и написания функций Python есть отдельный набор из 32 заданий.
+Три режима используют одинаковые модель, запрос и предел ответа.
+[Как запустить сравнение и читать результаты](docs/benchmarks.md).
 
 ## Состав репозитория
 

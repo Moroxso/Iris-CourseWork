@@ -197,7 +197,7 @@ def main(
     comparison_budget: int | None = None,
 ) -> int:
     if comparison_budget is not None and (
-        type(comparison_budget) is not int or not 1 <= comparison_budget <= 32 or serve is None
+        type(comparison_budget) is not int or not 1 <= comparison_budget <= 256 or serve is None
     ):
         raise ValueError("Comparison requires a session and a bounded shared decoding budget")
     process_began = time.perf_counter()
